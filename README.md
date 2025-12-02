@@ -17,6 +17,52 @@ source venv/bin/activate
 
 # Installer les dépendances
 pip install -r requirements.txt
+
+# Configurer les credentials (optionnel mais recommandé)
+cp .env.example .env
+# Éditer .env avec vos credentials
+```
+
+## Configuration des credentials
+
+**Priorité de résolution** (du plus prioritaire au moins prioritaire) :
+1. Arguments CLI (`-u`, `-p`)
+2. Variables d'environnement (`NAC_AUDIT_USERNAME`, `NAC_AUDIT_PASSWORD`)
+3. Fichier `.env`
+4. Prompt interactif
+
+### Option 1 : Fichier .env (recommandé pour usage régulier)
+
+```bash
+cp .env.example .env
+chmod 600 .env  # Restreindre les permissions
+```
+
+Éditer `.env` :
+```
+NAC_AUDIT_USERNAME=admin
+NAC_AUDIT_PASSWORD=your_password
+```
+
+### Option 2 : Variables d'environnement (recommandé pour CI/CD)
+
+```bash
+export NAC_AUDIT_USERNAME="admin"
+export NAC_AUDIT_PASSWORD="secret"
+python nac_audit.py -i switches.csv -o rapport.csv
+```
+
+### Option 3 : Prompt interactif (usage ponctuel)
+
+```bash
+python nac_audit.py -i switches.csv -o rapport.csv
+# Username et password demandés interactivement
+```
+
+### Option 4 : Arguments CLI (non recommandé - visible dans l'historique)
+
+```bash
+python nac_audit.py -i switches.csv -o rapport.csv -u admin -p secret
 ```
 
 ## Utilisation
@@ -56,7 +102,9 @@ python nac_audit.py -i switches.csv -o rapport.csv -u admin
 | `-o, --output` | Fichier CSV de sortie | (requis) |
 | `-w, --workers` | Nombre de workers parallèles | 10 |
 | `-t, --timeout` | Timeout connexion (secondes) | 30 |
-| `-u, --username` | Username SSH | (interactif) |
+| `-u, --username` | Username SSH | (env/prompt) |
+| `-p, --password` | Password SSH (non recommandé) | (env/prompt) |
+| `-e, --env-file` | Fichier .env alternatif | .env |
 | `-l, --log-dir` | Répertoire des logs | ./logs |
 
 ## Sortie
