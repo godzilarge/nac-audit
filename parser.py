@@ -18,16 +18,55 @@ class SwitchParser:
     Parse les données brutes collectées et génère les rapports par port.
     """
     
-    # Regex pour normaliser les noms d'interfaces
+    # Regex pour normaliser les noms d'interfaces (forme longue -> forme courte)
+    # Couvre IOS, IOS-XE, NX-OS
     INTERFACE_PATTERNS = [
+        # Ethernet standards
         (r"^GigabitEthernet", "Gi"),
         (r"^FastEthernet", "Fa"),
+        (r"^Ethernet", "Eth"),
+        
+        # Multi-Gigabit (mGig) - Catalyst 9000
+        (r"^TwoGigabitEthernet", "Tw"),
+        (r"^FiveGigabitEthernet", "Fi"),
+        
+        # 10G+
         (r"^TenGigabitEthernet", "Te"),
         (r"^TwentyFiveGigE", "Twe"),
+        (r"^TwentyFiveGigabitEthernet", "Twe"),
         (r"^FortyGigabitEthernet", "Fo"),
+        (r"^FiftyGigE", "Fif"),
         (r"^HundredGigE", "Hu"),
-        (r"^Ethernet", "Et"),
+        (r"^HundredGigabitEthernet", "Hu"),
+        (r"^TwoHundredGigE", "TH"),
+        (r"^FourHundredGigE", "FH"),
+        
+        # Application hosting - Catalyst 9300/9400
+        (r"^AppGigabitEthernet", "Ap"),
+        
+        # Port-channel / LAG
+        (r"^Port-channel", "Po"),
+        
+        # NX-OS
+        (r"^Eth(?:ernet)?(?=/)", "Eth"),  # Eth1/1 format NX-OS
+        
+        # Management
+        (r"^mgmt", "mgmt"),
+        (r"^Management", "Ma"),
     ]
+    
+    # Préfixes d'interfaces valides pour le matching (forme courte)
+    # Exclut: Vlan, Loopback, Tunnel, etc.
+    INTERFACE_PREFIXES = (
+        r"^("
+        r"Gi|Fa|Eth|"                    # Base Ethernet
+        r"Tw|Fi|"                         # mGig
+        r"Te|Twe|Fo|Fif|Hu|TH|FH|"       # High-speed
+        r"Ap|"                            # App hosting
+        r"Po|"                            # Port-channel
+        r"mgmt|Ma"                        # Management
+        r")"
+    )
     
     def __init__(self, hostname: str, raw_data: RawSwitchData):
         self.hostname = hostname
@@ -141,10 +180,7 @@ class SwitchParser:
                 continue
             
             # Matcher les interfaces physiques
-            match = re.match(
-                r"^(Gi|Fa|Te|Twe|Fo|Hu|Et)[\d/]+",
-                line
-            )
+            match = re.match(self.INTERFACE_PREFIXES + r"[\d/]+", line)
             if not match:
                 continue
             
@@ -173,61 +209,43 @@ class SwitchParser:
         Interface                      Status         Protocol Description
         Gi1/0/1                        up             up       Workstation PC-001
         Gi1/0/2                        admin down     down
+        Tw1/0/10                       up             up       ||-- Description --||
         """
         output = self.raw_data.interfaces_description
         if not output:
             return
         
+        # Regex robuste pour capturer: interface, status, protocol, description
+        # Status peut être "up", "down", ou "admin down"
+        pattern = re.compile(
+            r"^(\S+)\s+"                           # Interface
+            r"(up|down|admin down)\s+"             # Status (admin status)
+            r"(up|down)\s*"                        # Protocol (oper status)
+            r"(.*)$",                              # Description (peut être vide)
+            re.IGNORECASE
+        )
+        
         for line in output.splitlines():
-            line = line.strip()
-            
             # Ignorer les lignes d'en-tête et vides
-            if not line or line.startswith("Interface") or line.startswith("-"):
+            if not line.strip() or line.strip().startswith("Interface") or line.startswith("-"):
                 continue
             
-            # Matcher les interfaces physiques
-            match = re.match(
-                r"^(Gi|Fa|Te|Twe|Fo|Hu|Et)[\d/]+",
-                line
-            )
+            match = pattern.match(line)
             if not match:
                 continue
             
-            parts = line.split()
-            if len(parts) < 3:
+            interface_raw, admin_status, protocol, description = match.groups()
+            
+            # Vérifier que c'est une interface physique
+            if not re.match(self.INTERFACE_PREFIXES, interface_raw):
                 continue
             
-            interface = self._normalize_interface(parts[0])
-            
-            # Déterminer admin status
-            # "up", "down", "admin down"
-            admin_status = "up"
-            if "admin" in line.lower() and "down" in line.lower():
-                admin_status = "admin down"
-            elif parts[1].lower() == "down":
-                admin_status = "down"
-            elif parts[1].lower() == "up":
-                admin_status = "up"
-            
-            # La description est tout ce qui reste après les status
-            # Format: Interface Status Protocol Description
-            description = ""
-            try:
-                # Trouver la position après le protocol status
-                # Le protocol est généralement up/down après le status admin
-                desc_match = re.search(
-                    r"^[\S]+\s+(?:admin\s+)?(?:up|down)\s+(?:up|down)\s+(.*)",
-                    line,
-                    re.IGNORECASE
-                )
-                if desc_match:
-                    description = desc_match.group(1).strip()
-            except Exception:
-                pass
+            interface = self._normalize_interface(interface_raw)
             
             self._description_data[interface] = {
-                "admin_status": admin_status,
-                "description": description
+                "admin_status": admin_status.lower(),
+                "oper_status": protocol.lower(),
+                "description": description.strip()
             }
     
     def _parse_mac_address_table(self) -> None:
@@ -271,7 +289,7 @@ class SwitchParser:
             port = self._normalize_interface(port)
             
             # Ignorer les ports non physiques (Po, Vl, etc.)
-            if not re.match(r"^(Gi|Fa|Te|Twe|Fo|Hu|Et)", port):
+            if not re.match(self.INTERFACE_PREFIXES, port):
                 continue
             
             # Ajouter la MAC au port
@@ -309,7 +327,7 @@ class SwitchParser:
         pattern1 = re.compile(r"Dot1x Info for (\S+)", re.IGNORECASE)
         
         # Pattern 2: Ligne avec interface au début (format tabulaire)
-        pattern2 = re.compile(r"^(Gi|Fa|Te|Twe|Fo|Hu|Et)[\d/]+", re.MULTILINE)
+        pattern2 = re.compile(self.INTERFACE_PREFIXES + r"[\d/]+", re.MULTILINE)
         
         # Pattern 1
         for match in pattern1.finditer(output):
@@ -360,8 +378,16 @@ class SwitchParser:
             report.vlan = sw_data.get("access_vlan", "N/A")
             report.voice_vlan = sw_data.get("voice_vlan", "")
             
-            # Status opérationnel (show interfaces status)
-            if interface in self._status_data:
+            # Status admin, oper et description (show interfaces description)
+            # C'est la source la plus fiable pour admin_status et oper_status
+            if interface in self._description_data:
+                desc_data = self._description_data[interface]
+                report.admin_status = desc_data.get("admin_status", "N/A")
+                report.oper_status = desc_data.get("oper_status", "N/A")
+                report.description = desc_data.get("description", "")
+            
+            # Fallback sur show interfaces status si pas de données de description
+            if report.oper_status == "N/A" and interface in self._status_data:
                 status = self._status_data[interface].get("oper_status", "N/A")
                 # Normaliser les status
                 if status == "connected":
@@ -370,15 +396,6 @@ class SwitchParser:
                     report.oper_status = "down"
                 else:
                     report.oper_status = status
-            
-            # Status admin et description (show interfaces description)
-            if interface in self._description_data:
-                report.admin_status = self._description_data[interface].get(
-                    "admin_status", "N/A"
-                )
-                report.description = self._description_data[interface].get(
-                    "description", ""
-                )
             
             # MAC address (première MAC trouvée)
             if interface in self._mac_data and self._mac_data[interface]:

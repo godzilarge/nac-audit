@@ -97,6 +97,31 @@ Capture VLANs Allowed: ALL
 Name: Gi1/0/4
 Switchport: Disabled
 
+Name: Tw1/0/10
+Switchport: Enabled
+Administrative Mode: static access
+Operational Mode: static access
+Administrative Trunking Encapsulation: dot1q
+Operational Trunking Encapsulation: native
+Negotiation of Trunking: Off
+Access Mode VLAN: 1098 (mgmt_vlan)
+Trunking Native Mode VLAN: 1 (default)
+Administrative Native VLAN tagging: enabled
+Voice VLAN: none
+Administrative private-vlan host-association: none
+Administrative private-vlan mapping: none
+Administrative private-vlan trunk native VLAN: none
+Administrative private-vlan trunk Native VLAN tagging: enabled
+Administrative private-vlan trunk encapsulation: dot1q
+Administrative private-vlan trunk normal VLANs: none
+Administrative private-vlan trunk associations: none
+Administrative private-vlan trunk mappings: none
+Operational private-vlan: none
+Trunking VLANs Enabled: ALL
+Pruning VLANs Enabled: 2-1001
+Capture Mode Disabled
+Capture VLANs Allowed: ALL
+
 Name: Vlan100
 Switchport: Disabled
 """
@@ -117,6 +142,7 @@ Gi1/0/2                        down           down     Printer-Floor1
 Gi1/0/3                        up             up       Guest-Port
 Gi1/0/4                        admin down     down     
 Gi1/0/5                        up             up       Uplink-Core
+Tw1/0/10                       up             up       ||-- Management Center 02//Management0 --||
 Vl100                          up             up       Data VLAN
 """
 
@@ -209,12 +235,12 @@ def test_parser():
     
     errors = []
     
-    # Doit trouver 3 ports (Gi1/0/1, Gi1/0/2, Gi1/0/3 - switchport enabled)
+    # Doit trouver 4 ports (Gi1/0/1, Gi1/0/2, Gi1/0/3, Tw1/0/10 - switchport enabled)
     # Gi1/0/4 a switchport disabled, donc exclu
-    if len(ports) != 3:
-        errors.append(f"ERREUR: Attendu 3 ports, trouvé {len(ports)}")
+    if len(ports) != 4:
+        errors.append(f"ERREUR: Attendu 4 ports, trouvé {len(ports)}")
     else:
-        print("✓ Nombre de ports correct (3)")
+        print("✓ Nombre de ports correct (4)")
     
     # Vérifier Gi1/0/1
     gi1_0_1 = next((p for p in ports if p.port == "Gi1/0/1"), None)
@@ -275,6 +301,34 @@ def test_parser():
             errors.append(f"ERREUR: Gi1/0/3 VLAN attendu 150, trouvé {gi1_0_3.vlan}")
     else:
         errors.append("ERREUR: Gi1/0/3 non trouvé")
+    
+    # Vérifier Tw1/0/10 - Test du préfixe Tw et description avec espaces
+    tw1_0_10 = next((p for p in ports if p.port == "Tw1/0/10"), None)
+    if tw1_0_10:
+        print("✓ Tw1/0/10 trouvé (préfixe Tw reconnu)")
+        
+        if tw1_0_10.vlan == "1098":
+            print("✓ Tw1/0/10 VLAN = 1098")
+        else:
+            errors.append(f"ERREUR: Tw1/0/10 VLAN attendu 1098, trouvé {tw1_0_10.vlan}")
+        
+        if tw1_0_10.oper_status == "up":
+            print("✓ Tw1/0/10 oper_status = up")
+        else:
+            errors.append(f"ERREUR: Tw1/0/10 oper_status attendu up, trouvé {tw1_0_10.oper_status}")
+        
+        if tw1_0_10.admin_status == "up":
+            print("✓ Tw1/0/10 admin_status = up")
+        else:
+            errors.append(f"ERREUR: Tw1/0/10 admin_status attendu up, trouvé {tw1_0_10.admin_status}")
+        
+        expected_desc = "||-- Management Center 02//Management0 --||"
+        if tw1_0_10.description == expected_desc:
+            print("✓ Tw1/0/10 description avec espaces correctement parsée")
+        else:
+            errors.append(f"ERREUR: Tw1/0/10 description attendue '{expected_desc}', trouvée '{tw1_0_10.description}'")
+    else:
+        errors.append("ERREUR: Tw1/0/10 non trouvé")
     
     # Résultat final
     print("\n" + "=" * 60)
@@ -345,11 +399,43 @@ def test_interface_normalization():
     parser = SwitchParser("test", raw_data)
     
     test_cases = [
+        # Ethernet standards
         ("GigabitEthernet1/0/1", "Gi1/0/1"),
         ("FastEthernet0/1", "Fa0/1"),
+        ("Ethernet1/1", "Eth1/1"),
+        
+        # Châssis modulaires (4500, 6500, 6800) - format 2 segments
+        ("GigabitEthernet0/1", "Gi0/1"),
+        ("GigabitEthernet3/25", "Gi3/25"),
+        ("TenGigabitEthernet1/1", "Te1/1"),
+        ("Gi0/1", "Gi0/1"),  # Déjà court
+        ("Gi3/48", "Gi3/48"),
+        
+        # Multi-Gigabit (mGig)
+        ("TwoGigabitEthernet1/0/10", "Tw1/0/10"),
+        ("FiveGigabitEthernet1/0/5", "Fi1/0/5"),
+        
+        # High-speed
         ("TenGigabitEthernet1/1/1", "Te1/1/1"),
-        ("Gi1/0/1", "Gi1/0/1"),  # Déjà normalisé
-        ("  Gi1/0/1  ", "Gi1/0/1"),  # Avec espaces
+        ("TwentyFiveGigE1/0/1", "Twe1/0/1"),
+        ("FortyGigabitEthernet1/1/1", "Fo1/1/1"),
+        ("HundredGigE1/0/49", "Hu1/0/49"),
+        
+        # App hosting
+        ("AppGigabitEthernet1/0/1", "Ap1/0/1"),
+        
+        # Port-channel
+        ("Port-channel1", "Po1"),
+        ("Port-channel10", "Po10"),
+        ("Po1", "Po1"),
+        
+        # Déjà normalisés
+        ("Gi1/0/1", "Gi1/0/1"),
+        ("Tw1/0/10", "Tw1/0/10"),
+        ("Te1/1/1", "Te1/1/1"),
+        
+        # Avec espaces
+        ("  Gi1/0/1  ", "Gi1/0/1"),
     ]
     
     errors = []
