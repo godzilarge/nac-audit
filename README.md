@@ -6,10 +6,6 @@ Identifie les ports où le NAC (dot1x) n'est pas activé en comparant tous les p
 
 ## Plateformes supportées
 
-- Cisco Catalyst 2960-X
-- Cisco Catalyst 4500
-- Cisco Catalyst 9200
-- Cisco Catalyst 9300
 - Tout switch IOS/IOS-XE supportant les commandes standard
 
 ## Installation
