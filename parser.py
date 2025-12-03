@@ -19,30 +19,41 @@ class SwitchParser:
     """
     
     # Regex pour normaliser les noms d'interfaces (forme longue -> forme courte)
-    # Couvre IOS, IOS-XE, NX-OS
+    # Couvre IOS, IOS-XE, NX-OS et les formes CDP/LLDP
     INTERFACE_PATTERNS = [
-        # Ethernet standards
+        # Ethernet standards (formes longues et CDP)
         (r"^GigabitEthernet", "Gi"),
+        (r"^Gig(?=\d)", "Gi"),           # CDP: Gig 1/0/1
         (r"^FastEthernet", "Fa"),
+        (r"^Fas(?=\d)", "Fa"),           # CDP: Fas 0/1
         (r"^Ethernet", "Eth"),
+        (r"^Eth(?=\d)", "Eth"),          # CDP: Eth 1/1
         
         # Multi-Gigabit (mGig) - Catalyst 9000
         (r"^TwoGigabitEthernet", "Tw"),
+        (r"^Two(?=\d)", "Tw"),           # CDP: Two 1/0/1
         (r"^FiveGigabitEthernet", "Fi"),
+        (r"^Fiv(?=\d)", "Fi"),           # CDP: Fiv 1/0/1
         
         # 10G+
         (r"^TenGigabitEthernet", "Te"),
+        (r"^Ten(?=\d)", "Te"),           # CDP: Ten 1/0/1
         (r"^TwentyFiveGigE", "Twe"),
         (r"^TwentyFiveGigabitEthernet", "Twe"),
+        (r"^Twe(?=\d)", "Twe"),          # CDP: Twe 1/0/1
         (r"^FortyGigabitEthernet", "Fo"),
+        (r"^For(?=\d)", "Fo"),           # CDP: For 1/0/1
         (r"^FiftyGigE", "Fif"),
+        (r"^Fif(?=\d)", "Fif"),          # CDP: Fif 1/0/1
         (r"^HundredGigE", "Hu"),
         (r"^HundredGigabitEthernet", "Hu"),
+        (r"^Hun(?=\d)", "Hu"),           # CDP: Hun 1/0/1
         (r"^TwoHundredGigE", "TH"),
         (r"^FourHundredGigE", "FH"),
         
         # Application hosting - Catalyst 9300/9400
         (r"^AppGigabitEthernet", "Ap"),
+        (r"^App(?=\d)", "Ap"),           # CDP: App 1/0/1
         
         # Port-channel / LAG
         (r"^Port-channel", "Po"),
@@ -78,6 +89,8 @@ class SwitchParser:
         self._description_data: dict[str, dict] = {}
         self._mac_data: dict[str, list[str]] = {}
         self._dot1x_ports: set[str] = set()
+        self._cdp_neighbors: dict[str, str] = {}
+        self._lldp_neighbors: dict[str, str] = {}
     
     def _normalize_interface(self, interface: str) -> str:
         """
@@ -345,6 +358,115 @@ class SwitchParser:
                     interface = self._normalize_interface(parts[0])
                     self._dot1x_ports.add(interface)
     
+    def _parse_cdp_neighbors(self) -> None:
+        """
+        Parse 'show cdp neighbors'.
+        
+        Format typique:
+        Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID
+        Switch-Core      Gi 1/0/1          180              R S   WS-C3850  Gi 1/0/24
+        AP-Floor3        Ten 1/0/10        140              T     AIR-AP    Gi 0
+        
+        Note: L'interface locale peut être formatée avec espace et préfixes variés:
+        - Gi, Gig (GigabitEthernet)
+        - Te, Ten (TenGigabitEthernet)
+        - Fa, Fas (FastEthernet)
+        - Tw, Two (TwoGigabitEthernet)
+        - etc.
+        """
+        output = self.raw_data.cdp_neighbors
+        if not output:
+            return
+        
+        # Préfixes CDP possibles (formes courtes et moyennes)
+        cdp_prefixes = (
+            r"(?:"
+            r"Gig?|Gi|"           # GigabitEthernet
+            r"Ten?|Te|"           # TenGigabitEthernet
+            r"Fas?|Fa|"           # FastEthernet
+            r"Two?|Tw|"           # TwoGigabitEthernet
+            r"Fiv?|Fi|"           # FiveGigabitEthernet
+            r"For?|Fo|"           # FortyGigabitEthernet
+            r"Hun?|Hu|"           # HundredGigE
+            r"Twe?|"              # TwentyFiveGigE
+            r"Eth?|"              # Ethernet
+            r"App?|Ap|"           # AppGigabitEthernet
+            r"Po"                 # Port-channel
+            r")"
+        )
+        
+        for line in output.splitlines():
+            line = line.strip()
+            
+            # Ignorer les headers et lignes vides
+            if not line or line.startswith("Device") or line.startswith("-") or line.startswith("Capability"):
+                continue
+            
+            # Pattern pour capturer: device_id + interface locale
+            # L'interface peut être "Gi 1/0/1", "Gig 1/0/1", "Ten 2/0/48" (avec espace après préfixe)
+            match = re.match(
+                r"^(\S+)\s+"                         # Device ID
+                r"(" + cdp_prefixes + r")\s*"        # Préfixe interface
+                r"([\d/]+)\s+"                       # Numéro interface
+                r"(\d+)\s+",                         # Holdtime
+                line,
+                re.IGNORECASE
+            )
+            
+            if match:
+                device_id = match.group(1)
+                iface_prefix = match.group(2)
+                iface_num = match.group(3)
+                
+                # Reconstruire et normaliser l'interface
+                local_interface = f"{iface_prefix}{iface_num}"
+                local_interface = self._normalize_interface(local_interface)
+                
+                # Stocker le neighbor (on garde le premier trouvé s'il y en a plusieurs)
+                if local_interface not in self._cdp_neighbors:
+                    self._cdp_neighbors[local_interface] = device_id
+    
+    def _parse_lldp_neighbors(self) -> None:
+        """
+        Parse 'show lldp neighbors'.
+        
+        Format typique:
+        Device ID           Local Intf     Hold-time  Capability      Port ID
+        switch-core.domain  Gi1/0/1        120        B,R             Gi1/0/24
+        phone-001           Gi1/0/10       180        T               port1
+        
+        Note: Format généralement sans espace dans l'interface
+        """
+        output = self.raw_data.lldp_neighbors
+        if not output:
+            return
+        
+        for line in output.splitlines():
+            line = line.strip()
+            
+            # Ignorer les headers et lignes vides
+            if not line or line.startswith("Device") or line.startswith("-") or line.startswith("Capability") or "Total entries" in line:
+                continue
+            
+            # Pattern pour LLDP - interface généralement collée
+            match = re.match(
+                r"^(\S+)\s+"                                    # Device ID
+                r"([A-Za-z]+[\d/]+)\s+"                         # Interface locale
+                r"(\d+)\s+",                                    # Hold-time
+                line
+            )
+            
+            if match:
+                device_id = match.group(1)
+                local_interface = match.group(2)
+                
+                # Normaliser l'interface
+                local_interface = self._normalize_interface(local_interface)
+                
+                # Stocker le neighbor
+                if local_interface not in self._lldp_neighbors:
+                    self._lldp_neighbors[local_interface] = device_id
+
     def parse_all(self) -> list[PortReport]:
         """
         Parse toutes les données et génère la liste des rapports par port.
@@ -358,10 +480,14 @@ class SwitchParser:
         self._parse_interfaces_description()
         self._parse_mac_address_table()
         self._parse_dot1x_all()
+        self._parse_cdp_neighbors()
+        self._parse_lldp_neighbors()
         
         logger.debug(
             f"[{self.hostname}] Ports switchport: {len(self._switchport_data)}, "
-            f"Ports dot1x: {len(self._dot1x_ports)}"
+            f"Ports dot1x: {len(self._dot1x_ports)}, "
+            f"CDP neighbors: {len(self._cdp_neighbors)}, "
+            f"LLDP neighbors: {len(self._lldp_neighbors)}"
         )
         
         # Fusionner les données
@@ -374,9 +500,21 @@ class SwitchParser:
                 port=interface,
             )
             
-            # Données switchport
-            report.vlan = sw_data.get("access_vlan", "N/A")
-            report.voice_vlan = sw_data.get("voice_vlan", "")
+            # Mode du port (operational mode: trunk, access, etc.)
+            oper_mode = sw_data.get("oper_mode", "").lower()
+            if "trunk" in oper_mode:
+                report.port_mode = "trunk"
+                report.vlan = ""  # Pas de VLAN pour les trunks
+                report.voice_vlan = ""
+            elif "access" in oper_mode:
+                report.port_mode = "access"
+                report.vlan = sw_data.get("access_vlan", "N/A")
+                report.voice_vlan = sw_data.get("voice_vlan", "")
+            else:
+                # Autres modes: dynamic, down, etc.
+                report.port_mode = oper_mode if oper_mode else "N/A"
+                report.vlan = sw_data.get("access_vlan", "N/A")
+                report.voice_vlan = sw_data.get("voice_vlan", "")
             
             # Status admin, oper et description (show interfaces description)
             # C'est la source la plus fiable pour admin_status et oper_status
@@ -402,17 +540,26 @@ class SwitchParser:
                 mac_entry = self._mac_data[interface][0]
                 report.mac_address = mac_entry["mac"]
                 
-                # Déterminer le domaine (data ou voice)
-                mac_vlan = mac_entry["vlan"]
-                if report.voice_vlan and mac_vlan == report.voice_vlan:
-                    report.domain = "voice"
-                elif mac_vlan == report.vlan:
-                    report.domain = "data"
-                else:
-                    report.domain = "data"  # Par défaut
+                # Déterminer le domaine (data ou voice) - seulement si pas trunk
+                if report.port_mode != "trunk":
+                    mac_vlan = mac_entry["vlan"]
+                    if report.voice_vlan and mac_vlan == report.voice_vlan:
+                        report.domain = "voice"
+                    elif mac_vlan == report.vlan:
+                        report.domain = "data"
+                    else:
+                        report.domain = "data"  # Par défaut
             
             # NAC activé ?
             report.nac_enabled = interface in self._dot1x_ports
+            
+            # CDP neighbor
+            if interface in self._cdp_neighbors:
+                report.cdp_neighbor = self._cdp_neighbors[interface]
+            
+            # LLDP neighbor
+            if interface in self._lldp_neighbors:
+                report.lldp_neighbor = self._lldp_neighbors[interface]
             
             reports.append(report)
         

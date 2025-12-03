@@ -20,11 +20,14 @@ class PortReport:
     oper_status: str = "N/A"
     admin_status: str = "N/A"
     description: str = ""
+    port_mode: str = "N/A"  # access, trunk, etc.
     mac_address: str = ""
     vlan: str = "N/A"
     voice_vlan: str = ""
     domain: str = ""  # data, voice, ou vide
     nac_enabled: bool = False
+    cdp_neighbor: str = ""
+    lldp_neighbor: str = ""
 
     def to_csv_row(self) -> dict:
         """Convertit en dictionnaire pour export CSV."""
@@ -34,11 +37,14 @@ class PortReport:
             "oper_status": self.oper_status,
             "admin_status": self.admin_status,
             "description": self.description,
+            "port_mode": self.port_mode,
             "mac_address": self.mac_address,
             "vlan": self.vlan,
             "voice_vlan": self.voice_vlan,
             "domain": self.domain,
-            "nac_enabled": "yes" if self.nac_enabled else "no"
+            "nac_enabled": "yes" if self.nac_enabled else "no",
+            "cdp_neighbor": self.cdp_neighbor,
+            "lldp_neighbor": self.lldp_neighbor,
         }
 
 
@@ -50,3 +56,5 @@ class RawSwitchData:
     interfaces_description: str = ""
     mac_address_table: str = ""
     dot1x_all: str = ""
+    cdp_neighbors: str = ""
+    lldp_neighbors: str = ""

@@ -194,11 +194,14 @@ def write_csv_report(ports: list[PortReport], output_path: Path) -> None:
         "oper_status",
         "admin_status",
         "description",
+        "port_mode",
         "mac_address",
         "vlan",
         "voice_vlan",
         "domain",
-        "nac_enabled"
+        "nac_enabled",
+        "cdp_neighbor",
+        "lldp_neighbor",
     ]
     
     with open(output_path, "w", newline="", encoding="utf-8") as f:

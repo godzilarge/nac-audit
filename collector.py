@@ -36,6 +36,8 @@ class SwitchCollector:
         "interfaces_description": "show interfaces description",
         "mac_address_table": "show mac address-table",
         "dot1x_all": "show dot1x all",
+        "cdp_neighbors": "show cdp neighbors",
+        "lldp_neighbors": "show lldp neighbors",
     }
     
     def __init__(

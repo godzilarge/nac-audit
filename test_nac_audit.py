@@ -189,6 +189,28 @@ MaxReq                    = 2
 TxPeriod                  = 30
 """
 
+# CDP neighbors
+SAMPLE_CDP_NEIGHBORS = """
+Capability Codes: R - Router, T - Trans Bridge, B - Source Route Bridge
+                  S - Switch, H - Host, I - IGMP, r - Repeater, P - Phone
+
+Device ID        Local Intrfce     Holdtme    Capability  Platform  Port ID
+Switch-Core      Gig 1/0/1         180              R S   WS-C9300  Gi 1/0/24
+Phone-001        Gi 1/0/3          140              H P   CP-8845   Port 1
+AP-Floor3        Ten 2/0/48        175              R T   C9136I-E  Gig 0
+"""
+
+# LLDP neighbors
+SAMPLE_LLDP_NEIGHBORS = """
+Capability codes:
+    (R) Router, (B) Bridge, (T) Telephone, (C) DOCSIS Cable Device
+    (W) WLAN Access Point, (P) Repeater, (S) Station, (O) Other
+
+Device ID           Local Intf     Hold-time  Capability      Port ID
+switch-core.local   Gi1/0/1        120        B,R             Gi1/0/24
+laptop-user1        Gi1/0/3        180        S               eth0
+"""
+
 
 def test_parser():
     """Test le parsing complet."""
@@ -202,7 +224,9 @@ def test_parser():
         interfaces_status=SAMPLE_INTERFACES_STATUS,
         interfaces_description=SAMPLE_INTERFACES_DESCRIPTION,
         mac_address_table=SAMPLE_MAC_ADDRESS_TABLE,
-        dot1x_all=SAMPLE_DOT1X_ALL
+        dot1x_all=SAMPLE_DOT1X_ALL,
+        cdp_neighbors=SAMPLE_CDP_NEIGHBORS,
+        lldp_neighbors=SAMPLE_LLDP_NEIGHBORS,
     )
     
     # Parser
@@ -212,20 +236,21 @@ def test_parser():
     print(f"\nPorts trouvés: {len(ports)}")
     
     # Afficher les résultats
-    print("\n{:<12} {:<10} {:<12} {:<18} {:<8} {:<8} {:<6}".format(
-        "Port", "Oper", "Admin", "MAC", "VLAN", "Voice", "NAC"
+    print("\n{:<12} {:<8} {:<10} {:<8} {:<8} {:<6} {:<15} {:<15}".format(
+        "Port", "Oper", "Mode", "VLAN", "Voice", "NAC", "CDP", "LLDP"
     ))
-    print("-" * 80)
+    print("-" * 100)
     
     for port in ports:
-        print("{:<12} {:<10} {:<12} {:<18} {:<8} {:<8} {:<6}".format(
+        print("{:<12} {:<8} {:<10} {:<8} {:<8} {:<6} {:<15} {:<15}".format(
             port.port,
             port.oper_status,
-            port.admin_status,
-            port.mac_address or "-",
-            port.vlan,
+            port.port_mode,
+            port.vlan or "-",
             port.voice_vlan or "-",
-            "YES" if port.nac_enabled else "NO"
+            "YES" if port.nac_enabled else "NO",
+            port.cdp_neighbor[:14] if port.cdp_neighbor else "-",
+            port.lldp_neighbor[:14] if port.lldp_neighbor else "-",
         ))
     
     # Validations
@@ -250,6 +275,11 @@ def test_parser():
         else:
             errors.append("ERREUR: Gi1/0/1 devrait avoir NAC enabled")
         
+        if gi1_0_1.port_mode == "access":
+            print("✓ Gi1/0/1 port_mode = access")
+        else:
+            errors.append(f"ERREUR: Gi1/0/1 port_mode attendu access, trouvé {gi1_0_1.port_mode}")
+        
         if gi1_0_1.vlan == "100":
             print("✓ Gi1/0/1 VLAN = 100")
         else:
@@ -269,6 +299,16 @@ def test_parser():
             print("✓ Gi1/0/1 oper_status = up")
         else:
             errors.append(f"ERREUR: Gi1/0/1 oper_status attendu up, trouvé {gi1_0_1.oper_status}")
+        
+        if gi1_0_1.cdp_neighbor == "Switch-Core":
+            print("✓ Gi1/0/1 CDP neighbor = Switch-Core")
+        else:
+            errors.append(f"ERREUR: Gi1/0/1 CDP neighbor attendu Switch-Core, trouvé '{gi1_0_1.cdp_neighbor}'")
+        
+        if gi1_0_1.lldp_neighbor == "switch-core.local":
+            print("✓ Gi1/0/1 LLDP neighbor = switch-core.local")
+        else:
+            errors.append(f"ERREUR: Gi1/0/1 LLDP neighbor attendu switch-core.local, trouvé '{gi1_0_1.lldp_neighbor}'")
     else:
         errors.append("ERREUR: Gi1/0/1 non trouvé")
     
@@ -354,18 +394,22 @@ def test_csv_export():
         oper_status="up",
         admin_status="up",
         description="Test port",
+        port_mode="access",
         mac_address="0011.2233.4455",
         vlan="100",
         voice_vlan="200",
         domain="data",
-        nac_enabled=True
+        nac_enabled=True,
+        cdp_neighbor="Switch-Core",
+        lldp_neighbor="switch-core.local",
     )
     
     row = port.to_csv_row()
     
     expected_keys = [
         "switch", "port", "oper_status", "admin_status", "description",
-        "mac_address", "vlan", "voice_vlan", "domain", "nac_enabled"
+        "port_mode", "mac_address", "vlan", "voice_vlan", "domain", "nac_enabled",
+        "cdp_neighbor", "lldp_neighbor"
     ]
     
     errors = []
@@ -376,6 +420,12 @@ def test_csv_export():
     
     if row.get("nac_enabled") != "yes":
         errors.append(f"nac_enabled devrait être 'yes', trouvé: {row.get('nac_enabled')}")
+    
+    if row.get("port_mode") != "access":
+        errors.append(f"port_mode devrait être 'access', trouvé: {row.get('port_mode')}")
+    
+    if row.get("cdp_neighbor") != "Switch-Core":
+        errors.append(f"cdp_neighbor devrait être 'Switch-Core', trouvé: {row.get('cdp_neighbor')}")
     
     if errors:
         print("ÉCHEC:")
@@ -403,6 +453,12 @@ def test_interface_normalization():
         ("GigabitEthernet1/0/1", "Gi1/0/1"),
         ("FastEthernet0/1", "Fa0/1"),
         ("Ethernet1/1", "Eth1/1"),
+        
+        # Formes CDP (préfixes moyens)
+        ("Gig1/0/1", "Gi1/0/1"),
+        ("Ten2/0/48", "Te2/0/48"),
+        ("Fas0/1", "Fa0/1"),
+        ("Two1/0/10", "Tw1/0/10"),
         
         # Châssis modulaires (4500, 6500, 6800) - format 2 segments
         ("GigabitEthernet0/1", "Gi0/1"),
