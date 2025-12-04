@@ -26,6 +26,7 @@ class PortReport:
     voice_vlan: str = ""
     domain: str = ""  # data, voice, ou vide
     nac_enabled: bool = False
+    nac_version: str = ""  # v1, v2, v3, ou vide
     cdp_neighbor: str = ""
     lldp_neighbor: str = ""
 
@@ -43,6 +44,7 @@ class PortReport:
             "voice_vlan": self.voice_vlan,
             "domain": self.domain,
             "nac_enabled": "yes" if self.nac_enabled else "no",
+            "nac_version": self.nac_version,
             "cdp_neighbor": self.cdp_neighbor,
             "lldp_neighbor": self.lldp_neighbor,
         }
@@ -58,3 +60,4 @@ class RawSwitchData:
     dot1x_all: str = ""
     cdp_neighbors: str = ""
     lldp_neighbors: str = ""
+    auth_config_mode: str = ""

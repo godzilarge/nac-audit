@@ -38,6 +38,7 @@ class SwitchCollector:
         "dot1x_all": "show dot1x all",
         "cdp_neighbors": "show cdp neighbors",
         "lldp_neighbors": "show lldp neighbors",
+        "auth_config_mode": "authentication display config-mode",
     }
     
     def __init__(

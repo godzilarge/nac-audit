@@ -200,6 +200,7 @@ def write_csv_report(ports: list[PortReport], output_path: Path) -> None:
         "voice_vlan",
         "domain",
         "nac_enabled",
+        "nac_version",
         "cdp_neighbor",
         "lldp_neighbor",
     ]

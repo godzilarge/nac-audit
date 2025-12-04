@@ -91,6 +91,7 @@ class SwitchParser:
         self._dot1x_ports: set[str] = set()
         self._cdp_neighbors: dict[str, str] = {}
         self._lldp_neighbors: dict[str, str] = {}
+        self._nac_version: str = ""  # Version NAC du switch (v1, v2, v3)
     
     def _normalize_interface(self, interface: str) -> str:
         """
@@ -467,6 +468,27 @@ class SwitchParser:
                 if local_interface not in self._lldp_neighbors:
                     self._lldp_neighbors[local_interface] = device_id
 
+    def _parse_auth_config_mode(self) -> None:
+        """
+        Parse 'authentication display config-mode'.
+        
+        Output typique:
+        - "Current configuration mode is legacy" -> v1/v2 (IBNS 1.0)
+        - "Current configuration mode is new-style" -> v3 (IBNS 2.0/C3PL)
+        
+        Cette commande retourne la version de configuration NAC du switch.
+        """
+        output = self.raw_data.auth_config_mode
+        if not output:
+            return
+        
+        output_lower = output.lower()
+        
+        if "new-style" in output_lower or "new style" in output_lower:
+            self._nac_version = "v3"
+        elif "legacy" in output_lower:
+            self._nac_version = "v1/v2"
+
     def parse_all(self) -> list[PortReport]:
         """
         Parse toutes les données et génère la liste des rapports par port.
@@ -482,12 +504,14 @@ class SwitchParser:
         self._parse_dot1x_all()
         self._parse_cdp_neighbors()
         self._parse_lldp_neighbors()
+        self._parse_auth_config_mode()
         
         logger.debug(
             f"[{self.hostname}] Ports switchport: {len(self._switchport_data)}, "
             f"Ports dot1x: {len(self._dot1x_ports)}, "
             f"CDP neighbors: {len(self._cdp_neighbors)}, "
-            f"LLDP neighbors: {len(self._lldp_neighbors)}"
+            f"LLDP neighbors: {len(self._lldp_neighbors)}, "
+            f"NAC version: {self._nac_version or 'N/A'}"
         )
         
         # Fusionner les données
@@ -552,6 +576,9 @@ class SwitchParser:
             
             # NAC activé ?
             report.nac_enabled = interface in self._dot1x_ports
+            
+            # NAC version (niveau switch, même valeur pour tous les ports)
+            report.nac_version = self._nac_version
             
             # CDP neighbor
             if interface in self._cdp_neighbors:

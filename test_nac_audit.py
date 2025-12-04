@@ -211,6 +211,15 @@ switch-core.local   Gi1/0/1        120        B,R             Gi1/0/24
 laptop-user1        Gi1/0/3        180        S               eth0
 """
 
+# Authentication config mode (NAC version)
+SAMPLE_AUTH_CONFIG_MODE_V3 = """
+Current configuration mode is new-style (Session aware).
+"""
+
+SAMPLE_AUTH_CONFIG_MODE_LEGACY = """
+Current configuration mode is legacy.
+"""
+
 
 def test_parser():
     """Test le parsing complet."""
@@ -227,6 +236,7 @@ def test_parser():
         dot1x_all=SAMPLE_DOT1X_ALL,
         cdp_neighbors=SAMPLE_CDP_NEIGHBORS,
         lldp_neighbors=SAMPLE_LLDP_NEIGHBORS,
+        auth_config_mode=SAMPLE_AUTH_CONFIG_MODE_V3,
     )
     
     # Parser
@@ -236,19 +246,19 @@ def test_parser():
     print(f"\nPorts trouvés: {len(ports)}")
     
     # Afficher les résultats
-    print("\n{:<12} {:<8} {:<10} {:<8} {:<8} {:<6} {:<15} {:<15}".format(
-        "Port", "Oper", "Mode", "VLAN", "Voice", "NAC", "CDP", "LLDP"
+    print("\n{:<12} {:<8} {:<10} {:<8} {:<6} {:<6} {:<15} {:<15}".format(
+        "Port", "Oper", "Mode", "VLAN", "NAC", "Ver", "CDP", "LLDP"
     ))
     print("-" * 100)
     
     for port in ports:
-        print("{:<12} {:<8} {:<10} {:<8} {:<8} {:<6} {:<15} {:<15}".format(
+        print("{:<12} {:<8} {:<10} {:<8} {:<6} {:<6} {:<15} {:<15}".format(
             port.port,
             port.oper_status,
             port.port_mode,
             port.vlan or "-",
-            port.voice_vlan or "-",
             "YES" if port.nac_enabled else "NO",
+            port.nac_version or "-",
             port.cdp_neighbor[:14] if port.cdp_neighbor else "-",
             port.lldp_neighbor[:14] if port.lldp_neighbor else "-",
         ))
@@ -309,6 +319,11 @@ def test_parser():
             print("✓ Gi1/0/1 LLDP neighbor = switch-core.local")
         else:
             errors.append(f"ERREUR: Gi1/0/1 LLDP neighbor attendu switch-core.local, trouvé '{gi1_0_1.lldp_neighbor}'")
+        
+        if gi1_0_1.nac_version == "v3":
+            print("✓ Gi1/0/1 NAC version = v3 (new-style)")
+        else:
+            errors.append(f"ERREUR: Gi1/0/1 NAC version attendu v3, trouvé '{gi1_0_1.nac_version}'")
     else:
         errors.append("ERREUR: Gi1/0/1 non trouvé")
     
@@ -400,6 +415,7 @@ def test_csv_export():
         voice_vlan="200",
         domain="data",
         nac_enabled=True,
+        nac_version="v3",
         cdp_neighbor="Switch-Core",
         lldp_neighbor="switch-core.local",
     )
@@ -409,7 +425,7 @@ def test_csv_export():
     expected_keys = [
         "switch", "port", "oper_status", "admin_status", "description",
         "port_mode", "mac_address", "vlan", "voice_vlan", "domain", "nac_enabled",
-        "cdp_neighbor", "lldp_neighbor"
+        "nac_version", "cdp_neighbor", "lldp_neighbor"
     ]
     
     errors = []
@@ -426,6 +442,9 @@ def test_csv_export():
     
     if row.get("cdp_neighbor") != "Switch-Core":
         errors.append(f"cdp_neighbor devrait être 'Switch-Core', trouvé: {row.get('cdp_neighbor')}")
+    
+    if row.get("nac_version") != "v3":
+        errors.append(f"nac_version devrait être 'v3', trouvé: {row.get('nac_version')}")
     
     if errors:
         print("ÉCHEC:")
