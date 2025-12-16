@@ -1,0 +1,48 @@
+---
+- hosts: switches
+  gather_facts: no
+  vars:
+    date_string: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+    output_dir: "./output"
+    output_file: "{{ output_dir }}/{{ inventory_hostname }}-prechecks-{{ date_string }}.txt"
+
+  tasks:
+
+    - name: Ensure output directory exists (local)
+      delegate_to: localhost
+      run_once: true
+      file:
+        path: "{{ output_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Collect running-config of target interfaces
+      cisco.ios.ios_command:
+        commands:
+          - "show running-config interface {{ item }}"
+      loop: "{{ target_interfaces }}"
+      register: interface_configs
+
+    - name: Write precheck output to file (local)
+      delegate_to: localhost
+      copy:
+        dest: "{{ output_file }}"
+        content: |
+          === PRECHECKS FOR {{ inventory_hostname }} ===
+          Date: {{ date_string }}
+
+          {% for iface in interface_configs.results %}
+          --------------------------------------------------
+          Interface: {{ iface.item }}
+          --------------------------------------------------
+          {{ iface.stdout[0] | default('NO OUTPUT') }}
+          {% endfor %}
+
+    - name: Reset interfaces to default configuration (guarded by dry-run)
+      cisco.ios.ios_config:
+        lines:
+          - "default interface {{ item }}"
+          - "interface {{ item }}"
+          - "description CACA"
+      loop: "{{ target_interfaces }}"
+      when: not dry_run
